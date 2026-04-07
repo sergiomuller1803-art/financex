@@ -1,0 +1,6 @@
+{
+  "name": "financex",
+  "version": "1.0.0",
+  "description": "Controle Financeiro Pessoal com IA",
+  "engines": { "node": "18.x" }
+}

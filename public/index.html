@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#070b12">
+<title>FinanceX</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500;600&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+<script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>html,body,#root{margin:0;padding:0;height:100%;width:100%;overflow:hidden;}*{-webkit-tap-highlight-color:transparent;}input[type=date]{color-scheme:dark;}</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useRef,useEffect,useCallback,useContext,createContext}=React;
+const{BarChart,Bar,PieChart,Pie,Cell,XAxis,YAxis,Tooltip,ResponsiveContainer,Legend}=Recharts;
+
+const MC=createContext(false);
+const useMobile=()=>useContext(MC);
+
+/* ── FIREBASE ── */
+let db=null,saveTimer=null;
+function initFirebase(cfg){try{if(!firebase.apps.length)firebase.initializeApp(cfg);db=firebase.firestore();return true;}catch(e){return false;}}
+async function loadFromFirestore(){if(!db)return null;try{const s=await db.collection('financex').doc('main').get();return s.exists?s.data():null;}catch(e){return null;}}
+function saveToFirestore(data){if(!db)return;clearTimeout(saveTimer);saveTimer=setTimeout(()=>db.collection('financex').doc('main').set(data).catch(()=>{}),1200);}
+
+/* ── THEME & GLOBALS ── */
+const T={bg:"#070b12",card:"#0d1421",card2:"#111827",border:"#1a2340",primary:"#5865f2",pLight:"#818cf8",success:"#22c55e",warn:"#f59e0b",danger:"#f43f5e",text:"#e2e8f0",muted:"#64748b",sub:"#94a3b8",teal:"#00d4aa"};
+const G=`*{margin:0;padding:0;box-sizing:border-box;}::-webkit-scrollbar{width:4px;height:4px;}::-webkit-scrollbar-track{background:#070b12;}::-webkit-scrollbar-thumb{background:#1a2340;border-radius:3px;}input,select,textarea{background:#0d1421;border:1px solid #1a2340;color:#e2e8f0;border-radius:10px;padding:10px 14px;font-family:'DM Sans',sans-serif;font-size:14px;width:100%;outline:none;transition:border-color .2s;}input:focus,select:focus,textarea:focus{border-color:#5865f2;}select option{background:#0d1421;}button{cursor:pointer;font-family:'DM Sans',sans-serif;}@keyframes dots{0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-4px)}}@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}@keyframes slideUp{from{opacity:0;transform:translateY(60px)}to{opacity:1;transform:translateY(0)}}@keyframes spin{to{transform:rotate(360deg)}}`;
+
+/* ── UTILS ── */
+const R=n=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(n??0);
+const Rs=n=>{const a=Math.abs(n);return(n<0?'-':'')+(a>=1000?'R$'+(a/1000).toFixed(1).replace('.',',')+'k':R(n));};
+const fd=d=>new Date(d+'T12:00:00').toLocaleDateString('pt-BR');
+const uid=()=>Math.random().toString(36).slice(2);
+const pct=(a,b)=>b===0?0:Math.min(Math.round((a/b)*100),100);
+const lsGet=(k,d)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch{return d;}};
+const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}};
+
+/* ── CONSTANTS ── */
+const EXPENSE_CATS=['Moradia','Alimentação','Transporte','Saúde','Educação','Lazer','Vestuário','Assinaturas','Serviços','Outros'];
+const INCOME_CATS=['Salário','Freelance','Investimentos','Aluguel','Bônus','Outros'];
+const INVEST_TYPES=['Renda Fixa','Ações','FII','ETF','Cripto','Previdência','Outro'];
+const DEBT_TYPES=['Financiamento','Empréstimo','Crédito Rotativo','Consignado','Outro'];
+const PIE_COLORS=['#5865f2','#00d4aa','#f59e0b','#f43f5e','#22c55e','#a78bfa','#fb923c','#38bdf8','#e879f9','#2dd4bf'];
+const MONTHLY=[{mes:'Out',receitas:7800,despesas:5400},{mes:'Nov',receitas:8200,despesas:6100},{mes:'Dez',receitas:11500,despesas:8900},{mes:'Jan',receitas:8500,despesas:5600},{mes:'Fev',receitas:7900,despesas:6200},{mes:'Mar',receitas:9200,despesas:5800},{mes:'Abr',receitas:10050,despesas:3454.9}];
+
+const INIT_TX=[
+  {id:'t1',type:'income', amount:8500, category:'Salário',     description:'Salário',        date:'2026-04-05',account:'Conta Corrente'},
+  {id:'t2',type:'expense',amount:1800, category:'Moradia',     description:'Aluguel',        date:'2026-04-10',account:'Conta Corrente'},
+  {id:'t3',type:'expense',amount:680,  category:'Alimentação', description:'Supermercado',   date:'2026-04-12',account:'Nubank'},
+  {id:'t4',type:'expense',amount:220,  category:'Transporte',  description:'Combustível',    date:'2026-04-14',account:'Nubank'},
+  {id:'t5',type:'income', amount:350,  category:'Investimentos',description:'Rendimento CDB',date:'2026-04-17',account:'Conta Corrente'},
+  {id:'t6',type:'expense',amount:420,  category:'Lazer',       description:'Restaurantes',   date:'2026-04-18',account:'Nubank'},
+];
+const INIT_CARDS=[{id:'c1',name:'Nubank',limit:5000,used:1484.9,dueDay:10,closingDay:3,color:'#820AD1'},{id:'c2',name:'Itaú Platinum',limit:8000,used:3240,dueDay:15,closingDay:8,color:'#F57600'}];
+const INIT_DEBTS=[{id:'d1',name:'Financiamento Carro',type:'Financiamento',total:45000,remaining:32000,monthly:850,rate:1.2,start:'2024-01-01',end:'2028-01-01'},{id:'d2',name:'Financiamento Imóvel',type:'Financiamento',total:280000,remaining:245000,monthly:2200,rate:0.72,start:'2022-03-01',end:'2052-03-01'}];
+const INIT_INVEST=[{id:'i1',name:'CDB Banco Inter 120% CDI',type:'Renda Fixa',amount:15000,current:16240,rate:12.5,date:'2024-01-15'},{id:'i2',name:'ITSA4',type:'Ações',amount:5000,current:5890,rate:17.8,date:'2023-11-01'}];
+const INIT_GOALS=[{id:'g1',name:'Reserva de Emergência',target:30000,current:18500,deadline:'2026-12-31',color:'#22c55e',icon:'🛡️'},{id:'g2',name:'Viagem Europa',target:15000,current:4200,deadline:'2027-06-30',color:'#5865f2',icon:'✈️'}];
+const INIT_DATA={tx:INIT_TX,cards:INIT_CARDS,debts:INIT_DEBTS,investments:INIT_INVEST,goals:INIT_GOALS};
+
+/* ── ATOMS ── */
+const Card=({c,s,o})=><div onClick={o} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:24,...s,cursor:o?'pointer':'default'}}>{c}</div>;
+const Btn=({ch,o,v='primary',full,dis,s})=>{const vs={primary:{background:T.primary,color:'#fff',border:'none'},ghost:{background:'transparent',color:T.sub,border:`1px solid ${T.border}`},danger:{background:T.danger,color:'#fff',border:'none'}};return <button onClick={o} disabled={dis} style={{...vs[v],borderRadius:10,padding:'12px 20px',fontSize:14,fontWeight:600,width:full?'100%':'auto',opacity:dis?.5:1,minHeight:44,...s}}>{ch}</button>;};
+const Badge=({ch,color=T.primary})=><span style={{background:color+'22',color,border:`1px solid ${color}40`,borderRadius:6,padding:'3px 10px',fontSize:12,fontWeight:600,whiteSpace:'nowrap'}}>{ch}</span>;
+const Prog=({v,color=T.primary,h=8})=><div style={{background:T.border,borderRadius:99,height:h,overflow:'hidden'}}><div style={{width:`${v}%`,height:'100%',background:color,borderRadius:99,transition:'width .4s'}}/></div>;
+const Mono=({ch,color,s})=><span style={{fontFamily:"'DM Mono',monospace",fontWeight:600,color,...s}}>{ch}</span>;
+const Stat=({label,value,color})=>{const m=useMobile();return <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:m?14:20}}><div style={{fontSize:11,color:T.muted,marginBottom:6,fontWeight:500}}>{label}</div><Mono color={color} s={{fontSize:m?15:20}} ch={value}/></div>;};
+const Fld=({label,children})=><div style={{marginBottom:14}}><label style={{display:'block',fontSize:13,color:T.sub,marginBottom:6,fontWeight:500}}>{label}</label>{children}</div>;
+const Row2=({children})=><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>{children}</div>;
+const ChartTip=({active,payload,label})=>{if(!active||!payload?.length)return null;return <div style={{background:T.card2,border:`1px solid ${T.border}`,padding:'10px 14px',borderRadius:10,fontSize:13}}>{label&&<div style={{color:T.sub,marginBottom:4}}>{label}</div>}{payload.map((p,i)=><div key={i} style={{color:p.color,fontFamily:"'DM Mono',monospace",fontWeight:600}}>{p.name}: {R(p.value)}</div>)}</div>;};
+const Hdr=({title,sub,btn})=>{const m=useMobile();return <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:m?20:32}}><div><h1 style={{fontSize:m?22:28,fontWeight:700,letterSpacing:'-0.5px'}}>{title}</h1>{sub&&<p style={{color:T.muted,marginTop:4,fontSize:m?12:14}}>{sub}</p>}</div>{btn}</div>;};
+
+/* ── MODAL ── */
+const Modal=({title,onClose,children})=>{
+  const m=useMobile();
+  return <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.78)',backdropFilter:'blur(4px)',display:'flex',alignItems:m?'flex-end':'center',justifyContent:'center',zIndex:1000}}>
+    <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:m?'20px 20px 0 0':20,padding:m?'24px 20px calc(28px + env(safe-area-inset-bottom))':32,width:m?'100%':'min(540px,92vw)',maxHeight:m?'92vh':'88vh',overflowY:'auto',animation:m?'slideUp .25s ease':'fadeIn .2s ease'}}>
+      {m&&<div style={{width:40,height:4,borderRadius:2,background:T.border,margin:'0 auto 20px'}}/>}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+        <h2 style={{fontSize:17,fontWeight:700}}>{title}</h2>
+        <button onClick={onClose} style={{background:'none',border:'none',color:T.muted,fontSize:28,lineHeight:1,minWidth:44,minHeight:44,display:'flex',alignItems:'center',justifyContent:'center'}}>×</button>
+      </div>
+      {children}
+    </div>
+  </div>;
+};
+
+/* ── NAV ── */
+const NAV=[{id:'dashboard',label:'Dashboard',icon:'⊞',short:'Início'},{id:'transactions',label:'Transações',icon:'⇅',short:'Lançar'},{id:'cards',label:'Cartões',icon:'▣',short:'Cartões'},{id:'debts',label:'Dívidas',icon:'⊖',short:'Dívidas'},{id:'investments',label:'Investimentos',icon:'◈',short:'Invest.'},{id:'goals',label:'Metas',icon:'◎',short:'Metas'},{id:'ai',label:'IA Financeira',icon:'◆',short:'IA'},{id:'settings',label:'Configurações',icon:'⚙',short:'Config'}];
+
+const Sidebar=({tab,setTab})=><aside style={{width:220,minWidth:220,background:T.card,borderRight:`1px solid ${T.border}`,display:'flex',flexDirection:'column',padding:'28px 0',flexShrink:0}}>
+  <div style={{padding:'0 24px 32px'}}>
+    <div style={{fontFamily:"'Playfair Display',serif",fontSize:24,fontWeight:700,background:`linear-gradient(135deg,${T.teal},${T.pLight})`,WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent'}}>FinanceX</div>
+    <div style={{fontSize:11,color:T.muted,marginTop:3}}>☁ Sincronizado na nuvem</div>
+  </div>
+  {NAV.map(n=><button key={n.id} onClick={()=>setTab(n.id)} style={{display:'flex',alignItems:'center',gap:12,padding:'11px 24px',background:tab===n.id?T.primary+'18':'transparent',border:'none',color:tab===n.id?T.pLight:T.sub,fontSize:14,fontWeight:tab===n.id?600:400,borderLeft:tab===n.id?`3px solid ${T.primary}`:'3px solid transparent',transition:'all .15s',textAlign:'left'}}><span style={{fontSize:16,opacity:.8}}>{n.icon}</span>{n.label}</button>)}
+  <div style={{flex:1}}/><div style={{padding:'16px 24px',borderTop:`1px solid ${T.border}`,fontSize:11,color:T.muted}}>Firebase · v1.1</div>
+</aside>;
+
+const BottomNav=({tab,setTab})=><nav style={{position:'fixed',bottom:0,left:0,right:0,background:T.card,borderTop:`1px solid ${T.border}`,display:'flex',overflowX:'auto',zIndex:100,paddingBottom:'env(safe-area-inset-bottom)',WebkitOverflowScrolling:'touch',scrollbarWidth:'none'}}>
+  <style>{`nav::-webkit-scrollbar{display:none}`}</style>
+  {NAV.map(n=><button key={n.id} onClick={()=>setTab(n.id)} style={{flex:'0 0 auto',minWidth:62,padding:'10px 4px 8px',display:'flex',flexDirection:'column',alignItems:'center',gap:3,background:'none',border:'none',color:tab===n.id?T.primary:T.muted,fontSize:10,fontWeight:tab===n.id?600:400,borderTop:tab===n.id?`2px solid ${T.primary}`:'2px solid transparent',transition:'color .15s'}}><span style={{fontSize:19,lineHeight:1}}>{n.icon}</span><span style={{whiteSpace:'nowrap'}}>{n.short}</span></button>)}
+</nav>;
+
+const TopBar=({label})=><div style={{position:'sticky',top:0,zIndex:90,background:T.bg+'ee',backdropFilter:'blur(12px)',borderBottom:`1px solid ${T.border}`,padding:'14px 16px',paddingTop:'calc(14px + env(safe-area-inset-top))',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+  <div style={{fontFamily:"'Playfair Display',serif",fontSize:18,fontWeight:700,background:`linear-gradient(135deg,${T.teal},${T.pLight})`,WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent'}}>FinanceX</div>
+  <div style={{fontSize:12,color:T.muted}}>{label}</div>
+</div>;
+
+/* ── SETUP ── */
+const SetupScreen=({onSetup})=>{
+  const[step,setStep]=useState(1);
+  const[cfg,setCfg]=useState({apiKey:'',projectId:'',authDomain:'',appId:''});
+  const[err,setErr]=useState('');
+  const[busy,setBusy]=useState(false);
+  const submit=async()=>{
+    setErr('');setBusy(true);
+    if(!cfg.apiKey||!cfg.projectId){setErr('Preencha API Key e Project ID.');setBusy(false);return;}
+    const config={apiKey:cfg.apiKey,authDomain:cfg.authDomain||`${cfg.projectId}.firebaseapp.com`,projectId:cfg.projectId,storageBucket:`${cfg.projectId}.appspot.com`,appId:cfg.appId};
+    if(!initFirebase(config)){setErr('Configuração inválida.');setBusy(false);return;}
+    try{await db.collection('financex').doc('main').get();lsSet('fx_firebase',config);onSetup(config);}
+    catch(e){setErr(`Erro: ${e.message}`);}
+    setBusy(false);
+  };
+  return <div style={{minHeight:'100vh',background:T.bg,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:"'DM Sans',sans-serif",padding:20,paddingTop:'calc(20px + env(safe-area-inset-top))'}}>
+    <div style={{width:'min(500px,100%)',animation:'fadeIn .3s ease'}}>
+      <div style={{textAlign:'center',marginBottom:32}}>
+        <div style={{fontFamily:"'Playfair Display',serif",fontSize:32,fontWeight:700,background:`linear-gradient(135deg,${T.teal},${T.pLight})`,WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',marginBottom:8}}>FinanceX</div>
+        <p style={{color:T.muted,fontSize:14}}>Configure sua conta para começar</p>
+      </div>
+      {step===1&&<div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:24,marginBottom:14}}>
+        <h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>📋 Antes de começar</h3>
+        {[['1.','Acesse','console.firebase.google.com','e crie um projeto gratuito (plano Spark)'],['2.','Vá em Firestore Database e crie um banco em','modo de teste',''],['3.','Em Configurações do projeto → Seus apps, registre um app','Web',''],['4.','Copie os valores do objeto','firebaseConfig','que aparecer']].map(([n,a,b,c])=><div key={n} style={{display:'flex',gap:10,marginBottom:10,fontSize:13,lineHeight:1.5}}><span style={{color:T.primary,fontWeight:700,minWidth:18}}>{n}</span><span style={{color:T.sub}}>{a} <span style={{color:T.text,fontWeight:500}}>{b}</span> {c}</span></div>)}
+        <button onClick={()=>setStep(2)} style={{width:'100%',padding:'12px',borderRadius:10,border:'none',background:T.primary,color:'#fff',fontWeight:600,fontSize:14,marginTop:8,minHeight:48}}>Tenho o Firebase →</button>
+      </div>}
+      {step===2&&<div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:24}}>
+        <h3 style={{fontSize:15,fontWeight:600,marginBottom:4}}>🔑 Configuração do Firebase</h3>
+        <p style={{fontSize:12,color:T.muted,marginBottom:16}}>Cole os valores do objeto <code style={{background:T.card2,padding:'1px 5px',borderRadius:4}}>firebaseConfig</code></p>
+        <Fld label="apiKey *"><input placeholder="AIzaSy..." value={cfg.apiKey} onChange={e=>setCfg(p=>({...p,apiKey:e.target.value}))}/></Fld>
+        <Fld label="projectId *"><input placeholder="meu-projeto-12345" value={cfg.projectId} onChange={e=>setCfg(p=>({...p,projectId:e.target.value}))}/></Fld>
+        <Fld label="authDomain (opcional)"><input placeholder="projeto.firebaseapp.com" value={cfg.authDomain} onChange={e=>setCfg(p=>({...p,authDomain:e.target.value}))}/></Fld>
+        <Fld label="appId (opcional)"><input placeholder="1:123:web:abc..." value={cfg.appId} onChange={e=>setCfg(p=>({...p,appId:e.target.value}))}/></Fld>
+        {err&&<div style={{padding:'10px 14px',background:T.danger+'18',border:`1px solid ${T.danger}40`,borderRadius:10,fontSize:13,color:T.danger,marginBottom:14}}>{err}</div>}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 2fr',gap:10,marginTop:4}}>
+          <button onClick={()=>setStep(1)} style={{padding:'12px',borderRadius:10,border:`1px solid ${T.border}`,background:'transparent',color:T.sub,fontWeight:600,fontSize:14,minHeight:48}}>← Voltar</button>
+          <button onClick={submit} disabled={busy} style={{padding:'12px',borderRadius:10,border:'none',background:T.primary,color:'#fff',fontWeight:600,fontSize:14,opacity:busy?.6:1,minHeight:48}}>{busy?'Conectando...':'Conectar'}</button>
+        </div>
+      </div>}
+    </div>
+  </div>;
+};
+
+const LoadingScreen=()=><div style={{minHeight:'100vh',background:T.bg,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:20,fontFamily:"'DM Sans',sans-serif"}}><div style={{width:40,height:40,borderRadius:'50%',border:`3px solid ${T.border}`,borderTopColor:T.primary,animation:'spin 0.8s linear infinite'}}/><p style={{color:T.muted,fontSize:14}}>Carregando seus dados...</p></div>;
+
+const SaveDot=({saving})=>{const m=useMobile();return <div style={{position:'fixed',bottom:m?'calc(72px + env(safe-area-inset-bottom))':20,right:m?12:24,fontSize:12,color:saving?T.warn:T.success,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:'6px 12px',opacity:saving?1:.5,zIndex:200}}>{saving?'⟳ Salvando...':'✓ Sync'}</div>;};
+
+/* ── DASHBOARD ── */
+const Dashboard=({tx,investments,debts,cards})=>{
+  const m=useMobile();
+  const income=tx.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+  const expenses=tx.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+  const balance=income-expenses;
+  const invested=investments.reduce((s,i)=>s+i.current,0);
+  const totalDebt=debts.reduce((s,d)=>s+d.remaining,0);
+  const netWorth=invested+balance-totalDebt;
+  const byCategory={};
+  tx.filter(t=>t.type==='expense').forEach(t=>{byCategory[t.category]=(byCategory[t.category]||0)+t.amount;});
+  const pieData=Object.entries(byCategory).sort((a,b)=>b[1]-a[1]).map(([name,value])=>({name,value}));
+  return <div>
+    {m&&<div style={{background:`linear-gradient(135deg,${T.primary}28,${T.teal}18)`,border:`1px solid ${T.primary}30`,borderRadius:20,padding:20,marginBottom:16,textAlign:'center'}}>
+      <div style={{fontSize:11,color:T.muted,marginBottom:6}}>💰 Saldo do Mês</div>
+      <Mono color={balance>=0?T.success:T.danger} s={{fontSize:34}} ch={R(balance)}/>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginTop:16}}>
+        <div style={{background:T.success+'15',borderRadius:12,padding:12}}><div style={{fontSize:11,color:T.muted,marginBottom:4}}>Receitas</div><Mono color={T.success} s={{fontSize:16}} ch={Rs(income)}/></div>
+        <div style={{background:T.danger+'15',borderRadius:12,padding:12}}><div style={{fontSize:11,color:T.muted,marginBottom:4}}>Despesas</div><Mono color={T.danger} s={{fontSize:16}} ch={Rs(expenses)}/></div>
+      </div>
+    </div>}
+    {!m&&<div style={{marginBottom:32}}><h1 style={{fontSize:28,fontWeight:700,letterSpacing:'-0.5px'}}>Dashboard</h1><p style={{color:T.muted,marginTop:4}}>{new Date().toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</p></div>}
+    {!m&&<div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:16,marginBottom:24}}>
+      <Stat label="💰 Saldo do Mês" value={R(balance)} color={balance>=0?T.success:T.danger}/>
+      <Stat label="📈 Receitas" value={R(income)} color={T.success}/>
+      <Stat label="📉 Despesas" value={R(expenses)} color={T.danger}/>
+      <Stat label="🏦 Patrimônio Líq." value={R(netWorth)} color={T.teal}/>
+    </div>}
+    <div style={{display:'grid',gridTemplateColumns:m?'1fr':'3fr 2fr',gap:16,marginBottom:m?14:24}}>
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:m?16:24}}>
+        <h3 style={{fontSize:14,fontWeight:600,marginBottom:m?12:20}}>Receitas vs Despesas</h3>
+        <ResponsiveContainer width="100%" height={m?155:220}>
+          <BarChart data={m?MONTHLY.slice(-4):MONTHLY} barGap={4}>
+            <XAxis dataKey="mes" stroke={T.muted} tick={{fontSize:11,fill:T.sub}}/>
+            <YAxis stroke={T.muted} tick={{fontSize:10,fill:T.sub}} tickFormatter={n=>n>=1000?`${n/1000}k`:n} width={34}/>
+            <Tooltip content={<ChartTip/>}/><Legend wrapperStyle={{fontSize:11}}/>
+            <Bar dataKey="receitas" name="Receitas" fill={T.success} radius={[4,4,0,0]}/>
+            <Bar dataKey="despesas" name="Despesas" fill={T.danger}  radius={[4,4,0,0]}/>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      {!m&&<div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:24}}>
+        <h3 style={{fontSize:14,fontWeight:600,marginBottom:12}}>Por Categoria</h3>
+        <ResponsiveContainer width="100%" height={178}><PieChart><Pie data={pieData} cx="50%" cy="50%" innerRadius={52} outerRadius={78} dataKey="value" paddingAngle={3}>{pieData.map((_,i)=><Cell key={i} fill={PIE_COLORS[i%PIE_COLORS.length]}/>)}</Pie><Tooltip formatter={v=>R(v)}/></PieChart></ResponsiveContainer>
+        <div style={{display:'flex',flexWrap:'wrap',gap:'6px 14px',marginTop:8}}>{pieData.slice(0,6).map((d,i)=><div key={d.name} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:T.sub}}><div style={{width:7,height:7,borderRadius:2,background:PIE_COLORS[i%PIE_COLORS.length]}}/>{d.name}</div>)}</div>
+      </div>}
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:m?10:16,marginBottom:m?14:24}}>
+      <Stat label="💳 Faturas Cartões" value={m?Rs(cards.reduce((s,c)=>s+c.used,0)):R(cards.reduce((s,c)=>s+c.used,0))} color={T.warn}/>
+      <Stat label="💰 Investido" value={m?Rs(invested):R(invested)} color={T.teal}/>
+    </div>
+    {m&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:14}}>
+      <Stat label="🏦 Patrimônio" value={Rs(netWorth)} color={T.teal}/>
+      <Stat label="📅 Parcelas/mês" value={Rs(debts.reduce((s,d)=>s+d.monthly,0))} color={T.danger}/>
+    </div>}
+    <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:m?16:24}}>
+      <h3 style={{fontSize:14,fontWeight:600,marginBottom:16}}>Últimas Transações</h3>
+      <div style={{display:'flex',flexDirection:'column',gap:8}}>
+        {[...tx].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,m?5:8).map(t=><div key={t.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:m?'10px 12px':'10px 14px',background:T.card2,borderRadius:12}}>
+          <div style={{display:'flex',alignItems:'center',gap:10,flex:1,minWidth:0}}>
+            <div style={{width:34,height:34,borderRadius:10,display:'flex',alignItems:'center',justifyContent:'center',background:(t.type==='income'?T.success:T.danger)+'22',fontSize:14,flexShrink:0}}>{t.type==='income'?'↑':'↓'}</div>
+            <div style={{minWidth:0}}><div style={{fontWeight:500,fontSize:m?13:14,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.description}</div><div style={{fontSize:11,color:T.muted}}>{t.category} · {fd(t.date)}</div></div>
+          </div>
+          <Mono color={t.type==='income'?T.success:T.danger} s={{fontSize:13,flexShrink:0,marginLeft:8}} ch={`${t.type==='income'?'+':'-'}${Rs(t.amount)}`}/>
+        </div>)}
+      </div>
+    </div>
+  </div>;
+};
+
+/* ── TRANSACTIONS ── */
+const Transactions=({tx,setTx})=>{
+  const m=useMobile();
+  const[filter,setFilter]=useState('all');
+  const[showModal,setShowModal]=useState(false);
+  const[form,setForm]=useState({type:'expense',amount:'',category:'',description:'',date:new Date().toISOString().slice(0,10),account:''});
+  const filtered=[...tx].filter(t=>filter==='all'||t.type===filter).sort((a,b)=>b.date.localeCompare(a.date));
+  const income=tx.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+  const expenses=tx.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+  const add=()=>{
+    if(!form.amount||!form.description||!form.category)return;
+    setTx(p=>[...p,{...form,id:uid(),amount:parseFloat(form.amount)}]);
+    setShowModal(false);setForm({type:'expense',amount:'',category:'',description:'',date:new Date().toISOString().slice(0,10),account:''});
+  };
+  const cats=form.type==='expense'?EXPENSE_CATS:INCOME_CATS;
+  return <div>
+    <Hdr title="Transações" sub="Receitas e despesas" btn={<button onClick={()=>setShowModal(true)} style={{padding:'10px 16px',borderRadius:10,border:'none',background:T.primary,color:'#fff',fontWeight:600,fontSize:13,minHeight:42}}>+ Novo</button>}/>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:m?8:16,marginBottom:m?16:24}}>
+      <Stat label="Receitas" value={m?Rs(income):R(income)} color={T.success}/>
+      <Stat label="Despesas" value={m?Rs(expenses):R(expenses)} color={T.danger}/>
+      <Stat label="Saldo" value={m?Rs(income-expenses):R(income-expenses)} color={income-expenses>=0?T.success:T.danger}/>
+    </div>
+    <div style={{display:'flex',gap:8,marginBottom:14}}>
+      {[['all','Todos'],['income','Receitas'],['expense','Despesas']].map(([v,l])=><button key={v} onClick={()=>setFilter(v)} style={{padding:'8px 14px',borderRadius:8,fontSize:13,fontWeight:500,border:'none',background:filter===v?T.primary:T.card,color:filter===v?'#fff':T.sub,minHeight:40}}>{l}</button>)}
+    </div>
+    {m?(
+      <div style={{display:'flex',flexDirection:'column',gap:8}}>
+        {filtered.length===0?<div style={{padding:32,textAlign:'center',color:T.muted}}>Nenhuma transação</div>
+          :filtered.map(t=><div key={t.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 14px',background:T.card,border:`1px solid ${T.border}`,borderRadius:14}}>
+          <div style={{display:'flex',alignItems:'center',gap:10,flex:1,minWidth:0}}>
+            <div style={{width:38,height:38,borderRadius:10,display:'flex',alignItems:'center',justifyContent:'center',background:(t.type==='income'?T.success:T.danger)+'22',fontSize:16,flexShrink:0}}>{t.type==='income'?'↑':'↓'}</div>
+            <div style={{minWidth:0}}>
+              <div style={{fontWeight:500,fontSize:14,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.description}</div>
+              <div style={{fontSize:11,color:T.muted,marginTop:3,display:'flex',gap:6,alignItems:'center'}}><Badge ch={t.category} color={t.type==='income'?T.success:T.warn}/><span>{fd(t.date)}</span></div>
+            </div>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:6,flexShrink:0,marginLeft:8}}>
+            <Mono color={t.type==='income'?T.success:T.danger} s={{fontSize:14}} ch={`${t.type==='income'?'+':'-'}${Rs(t.amount)}`}/>
+            <button onClick={()=>setTx(p=>p.filter(x=>x.id!==t.id))} style={{background:'none',border:'none',color:T.muted,fontSize:18,minWidth:32,minHeight:32,display:'flex',alignItems:'center',justifyContent:'center'}}>×</button>
+          </div>
+        </div>)}
+      </div>
+    ):(
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,overflow:'hidden'}}>
+        <div style={{borderBottom:`1px solid ${T.border}`,padding:'12px 20px',display:'grid',gridTemplateColumns:'110px 1fr 130px 130px 130px 32px',gap:12,fontSize:11,color:T.muted,fontWeight:700}}>
+          <span>DATA</span><span>DESCRIÇÃO</span><span>CATEGORIA</span><span>CONTA</span><span style={{textAlign:'right'}}>VALOR</span><span/>
+        </div>
+        {filtered.length===0?<div style={{padding:40,textAlign:'center',color:T.muted}}>Nenhuma transação</div>
+          :filtered.map((t,i)=><div key={t.id} style={{display:'grid',gridTemplateColumns:'110px 1fr 130px 130px 130px 32px',gap:12,padding:'13px 20px',alignItems:'center',fontSize:14,background:i%2===0?'transparent':T.card2+'60',borderBottom:`1px solid ${T.border}40`}}>
+          <span style={{color:T.muted,fontSize:13}}>{fd(t.date)}</span><span style={{fontWeight:500}}>{t.description}</span>
+          <span><Badge ch={t.category} color={t.type==='income'?T.success:T.warn}/></span>
+          <span style={{color:T.sub,fontSize:13}}>{t.account}</span>
+          <span style={{textAlign:'right'}}><Mono color={t.type==='income'?T.success:T.danger} s={{fontSize:14}} ch={`${t.type==='income'?'+':'-'}${R(t.amount)}`}/></span>
+          <button onClick={()=>setTx(p=>p.filter(x=>x.id!==t.id))} style={{background:'none',border:'none',color:T.muted,fontSize:16,padding:'2px'}}>×</button>
+        </div>)}
+      </div>
+    )}
+    {showModal&&<Modal title="Nova Transação" onClose={()=>setShowModal(false)}>
+      <Fld label="Tipo"><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>{[['expense','💸 Despesa'],['income','💰 Receita']].map(([v,l])=><button key={v} onClick={()=>setForm(f=>({...f,type:v,category:''}))} style={{padding:'12px 10px',borderRadius:10,border:'none',fontWeight:600,fontSize:14,background:form.type===v?(v==='income'?T.success:T.danger):T.card2,color:form.type===v?'#fff':T.sub,minHeight:48}}>{l}</button>)}</div></Fld>
+      <Row2><Fld label="Valor (R$)"><input type="number" inputMode="decimal" placeholder="0,00" value={form.amount} onChange={e=>setForm(f=>({...f,amount:e.target.value}))}/></Fld><Fld label="Data"><input type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))}/></Fld></Row2>
+      <Fld label="Categoria"><select value={form.category} onChange={e=>setForm(f=>({...f,category:e.target.value}))}><option value="">Selecione...</option>{cats.map(c=><option key={c} value={c}>{c}</option>)}</select></Fld>
+      <Fld label="Descrição"><input placeholder="Descrição" value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))}/></Fld>
+      <Fld label="Conta / Cartão"><input placeholder="Ex: Conta Corrente, Nubank..." value={form.account} onChange={e=>setForm(f=>({...f,account:e.target.value}))}/></Fld>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 2fr',gap:10,marginTop:8}}><button onClick={()=>setShowModal(false)} style={{padding:'12px',borderRadius:10,border:`1px solid ${T.border}`,background:'transparent',color:T.sub,fontWeight:600,fontSize:14,minHeight:48}}>Cancelar</button><button onClick={add} style={{padding:'12px',borderRadius:10,border:'none',background:T.primary,color:'#fff',fontWeight:600,fontSize:14,minHeight:48}}>Salvar</button></div>
+    </Modal>}
+  </div>;
+};
+
+/* ── CREDIT CARDS ── */
+const CreditCards=({cards,setCards})=>{
+  const m=useMobile();
+  const[showModal,setShowModal]=useState(false);
+  const[form,setForm]=useState({name:'',limit:'',used:'0',dueDay:'',closingDay:'',color:'#5865f2'});
+  const add=()=>{if(!form.name||!form.limit)return;setCards(p=>[...p,{...form,id:uid(),limit:parseFloat(form.limit),used:parseFloat(form.used)||0,dueDay:parseInt(form.dueDay)||10,closingDay:parseInt(form.closingDay)||3}]);setShowModal(false);setForm({name:'',limit:'',used:'0',dueDay:'',closingDay:'',color:'#5865f2'});};
+  const tl=cards.reduce((s,c)=>s+c.limit,0),tu=cards.reduce((s,c)=>s+c.used,0);
+  return <div>
+    <Hdr title="Cartões de Crédito" sub="Faturas e limites" btn={<button onClick={()=>setShowModal(true)} style={{padding:'10px 14px',borderRadius:10,border:'none',background:T.primary,color:'#fff',fontWeight:600,fontSize:13,minHeight:42}}>+ Novo</button>}/>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:m?10:16,marginBottom:m?16:24}}>
+      <Stat label="💳 Faturas" value={m?Rs(tu):R(tu)} color={T.warn}/>
+      <Stat label="✅ Disponível" value={m?Rs(tl-tu):R(tl-tu)} color={T.success}/>
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:m?'1fr':'repeat(auto-fill,minmax(300px,1fr))',gap:m?14:20}}>
+      {cards.map(c=>{const u=pct(c.used,c.limit);const uc=u>80?T.danger:u>50?T.warn:T.success;return <div key={c.id}>
+        <div style={{borderRadius:18,padding:m?'18px 20px':'28px',marginBottom:12,background:`linear-gradient(135deg,${c.color}ee,${c.color}88)`,minHeight:m?130:150,display:'flex',flexDirection:'column',justifyContent:'space-between',boxShadow:'0 8px 32px rgba(0,0,0,.4)',position:'relative',overflow:'hidden'}}>
+          <div style={{position:'absolute',right:-20,top:-20,width:100,height:100,borderRadius:'50%',background:'rgba(255,255,255,.06)'}}/>
+          <div style={{display:'flex',justifyContent:'space-between',position:'relative'}}><span style={{fontSize:m?15:18,fontWeight:700,color:'#fff'}}>{c.name}</span><span style={{color:'rgba(255,255,255,.6)',fontSize:11}}>CRÉDITO</span></div>
+          <div style={{position:'relative'}}><div style={{fontSize:11,color:'rgba(255,255,255,.6)',marginBottom:3}}>Fatura atual</div><div style={{fontFamily:"'DM Mono',monospace",fontSize:m?22:26,fontWeight:700,color:'#fff'}}>{R(c.used)}</div><div style={{fontSize:11,color:'rgba(255,255,255,.5)',marginTop:3}}>Limite: {R(c.limit)}</div></div>
+        </div>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:m?14:20}}>
+          <div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}><span style={{fontSize:13,color:T.muted}}>Uso do limite</span><Mono color={uc} s={{fontSize:13}} ch={`${u}%`}/></div>
+          <Prog v={u} color={uc}/>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:12}}>
+            {[['Fechamento',`Dia ${c.closingDay}`],['Vencimento',`Dia ${c.dueDay}`]].map(([l,v])=><div key={l} style={{background:T.card2,borderRadius:10,padding:'10px 14px'}}><div style={{fontSize:11,color:T.muted,marginBottom:3}}>{l}</div><div style={{fontWeight:600,fontSize:14}}>{v}</div></div>)}
+          </div>
+          <button onClick={()=>setCards(p=>p.filter(x=>x.id!==c.id))} style={{marginTop:12,background:'none',border:`1px solid ${T.border}`,color:T.muted,borderRadius:8,padding:'8px 12px',fontSize:12,width:'100%',minHeight:36}}>Remover</button>
+        </div>
+      </div>;})}
+    </div>
+    {showModal&&<Modal title="Novo Cartão" onClose={()=>setShowModal(false)}>
+      <Fld label="Nome do Cartão"><input placeholder="Ex: Nubank, Itaú..." value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}/></Fld>
+      <Row2><Fld label="Limite (R$)"><input type="number" inputMode="numeric" placeholder="5000" value={form.limit} onChange={e=>setForm(f=>({...f,limit:e.target.value}))}/></Fld><Fld label="Fatura Atual (R$)"><input type="number" inputMode="numeric" placeholder="0" value={form.used} onChange={e=>setForm(f=>({...f,used:e.target.value}))}/></Fld></Row2>
+      <Row2><Fld label="Dia Fechamento"><input type="number" inputMode="numeric" placeholder="3" min="1" max="31" value={form.closingDay} onChange={e=>setForm(f=>({...f,closingDay:e.target.value}))}/></Fld><Fld label="Dia Vencimento"><input type="number" inputMode="numeric" placeholder="10" min="1" max="31" value={form.dueDay} onChange={e=>setForm(f=>({...f,dueDay:e.target.value}))}/></Fld></Row2>
+      <Fld label="Cor do Cartão"><input type="color" value={form.color} onChange={e=>setForm(f=>({...f,color:e.target.value}))} style={{height:48,cursor:'pointer'}}/></Fld>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 2fr',gap:10,marginTop:8}}><button onClick={()=>setShowModal(false)} style={{padding:'12px',borderRadius:10,border:`1px solid ${T.border}`,background:'transparent',color:T.sub,fontWeight:600,minHeight:48}}>Cancelar</button><button onClick={add} style={{padding:'12px',borderRadius:10,border:'none',background:T.primary,color:'#fff',fontWeight:600,minHeight:48}}>Salvar</button></div>
+    </Modal>}
+  </div>;
+};
+
+/* ── DEBTS ── */
+const Debts=({debts,setDebts})=>{
+  const m=useMobile();
+  const[showModal,setShowModal]=useState(false);
+  const[form,setForm]=useState({name:'',type:'Financiamento',total:'',remaining:'',monthly:'',rate:'',start:'',end:''});
+  const add=()=>{if(!form.name||!form.total||!form.monthly)return;setDebts(p=>[...p,{...form,id:uid(),total:parseFloat(form.total),remaining:parseFloat(form.remaining)||parseFloat(form.total),monthly:parseFloat(form.monthly),rate:parseFloat(form.rate)||0}]);setShowModal(false);setForm({name:'',type:'Financiamento',total:'',remaining:'',monthly:'',rate:'',start:'',end:''});};
+  return <div>
+    <Hdr title="Dívidas" sub="Financiamentos e empréstimos" btn={<button onClick={()=>setShowModal(true)} style={{padding:'10px 14px',borderRadius:10,border:'none',background:T.primary,color:'#fff',fontWeight:600,fontSize:13,minHeight:42}}>+ Nova</button>}/>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:m?10:16,marginBottom:m?16:24}}>
+      <Stat label="🏦 Total Dívidas" value={m?Rs(debts.reduce((s,d)=>s+d.remaining,0)):R(debts.reduce((s,d)=>s+d.remaining,0))} color={T.danger}/>
+      <Stat label="📅 Parcelas/mês" value={m?Rs(debts.reduce((s,d)=>s+d.monthly,0)):R(debts.reduce((s,d)=>s+d.monthly,0))} color={T.warn}/>
+    </div>
+    <div style={{display:'flex',flexDirection:'column',gap:m?12:16}}>
+      {debts.map(d=>{const paid=d.total-d.remaining;const pp=pct(paid,d.total);return <div key={d.id} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:m?16:24}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:14}}>
+          <div><h3 style={{fontSize:m?14:16,fontWeight:600}}>{d.name}</h3><div style={{marginTop:5}}><Badge ch={d.type} color={T.warn}/></div></div>
+          <div style={{textAlign:'right',marginLeft:12}}><Mono color={T.danger} s={{fontSize:m?15:18}} ch={Rs(d.remaining)}/><div style={{fontSize:11,color:T.muted,marginTop:2}}>de {Rs(d.total)}</div></div>
+        </div>
+        <Prog v={pp} color={T.success} h={10}/>
+        <div style={{display:'flex',justifyContent:'space-between',marginTop:6,fontSize:12,color:T.muted}}><span>{Rs(paid)} pago</span><span>{pp}% quitado</span></div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:12}}>
+          {[{l:'Parcela',v:R(d.monthly)},{l:'Juros/mês',v:`${d.rate}%`},{l:'Início',v:d.start?fd(d.start):'—'},{l:'Término',v:d.end?fd(d.end):'—'}].map(({l,v})=><div key={l} style={{background:T.card2,borderRadius:10,padding:'10px 12px'}}><div style={{fontSize:10,color:T.muted,marginBottom:3}}>{l}</div><div style={{fontWeight:600,fontSize:13}}>{v}</div></div>)}
+        </div>
+        <button onClick={()=>setDebts(p=>p.filter(x=>x.id!==d.id))} style={{marginTop:12,background:'none',border:`1px solid ${T.border}`,color:T.muted,borderRadius:8,padding:'8px 12px',fontSize:12,width:'100%',minHeight:36}}>Remover</button>
+      </div>;})}
+    </div>
+    {showModal&&<Modal title="Nova Dívida" onClose={()=>setShowModal(false)}>
+      <Fld label="Nome"><input placeholder="Ex: Financiamento Carro..." value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}/></Fld>
+      <Fld label="Tipo"><select value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))}>{DEBT_TYPES.map(d=><option key={d} value={d}>{d}</option>)}</select></Fld>
+      <Row2><Fld label="Valor Total (R$)"><input type="number" inputMode="numeric" placeholder="0" value={form.total} onChange={e=>setForm(f=>({...f,total:e.target.value}))}/></Fld><Fld label="Saldo Restante (R$)"><input type="number" inputMode="numeric" placeholder="0" value={form.remaining} onChange={e=>setForm(f=>({...f,remaining:e.target.value}))}/></Fld></Row2>
+      <Row2><Fld label="Parcela Mensal (R$)"><input type="number" inputMode="numeric" placeholder="0" value={form.monthly} onChange={e=>setForm(f=>({...f,monthly:e.target.value}))}/></Fld><Fld label="Juros (% a.m.)"><input type="number" inputMode="decimal" placeholder="1.2" step="0.01" value={form.rate} onChange={e=>setForm(f=>({...f,rate:e.target.value}))}/></Fld></Row2>
+      <Row2><Fld label="Início"><input type="date" value={form.start} onChange={e=>setForm(f=>({...f,start:e.target.value}))}/></Fld><Fld label="Término"><input type="date" value={form.end} onChange={e=>setForm(f=>({...f,end:e.target.value}))}/></Fld></Row2>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 2fr',gap:10,marginTop:8}}><button onClick={()=>setShowModal(false)} style={{padding:'12px',borderRadius:10,border:`1px solid ${T.border}`,background:'transparent',color:T.sub,fontWeight:600,minHeight:48}}>Cancelar</button><button onClick={add} style={{padding:'12px',borderRadius:10,border:'none',background:T.primary,color:'#fff',fontWeight:600,minHeight:48}}>Salvar</button></div>
+    </Modal>}
+  </div>;
+};
+
+/* ── INVESTMENTS ── */
+const Investments=({investments,setInvestments})=>{
+  const m=useMobile();
+  const[showModal,setShowModal]=useState(false);
+  const[form,setForm]=useState({name:'',type:'Renda Fixa',amount:'',current:'',rate:'',date:new Date().toISOString().slice(0,10)});
+  const add=()=>{if(!form.name||!form.amount)return;setInvestments(p=>[...p,{...form,id:uid(),amount:parseFloat(form.amount),current:parseFloat(form.current)||parseFloat(form.amount),rate:parseFloat(form.rate)||0}]);setShowModal(false);setForm({name:'',type:'Renda Fixa',amount:'',current:'',rate:'',date:new Date().toISOString().slice(0,10)});};
+  const ti=investments.reduce((s,i)=>s+i.amount,0),tc=investments.reduce((s,i)=>s+i.current,0),tg=tc-ti;
+  const byType={};investments.forEach(i=>{byType[i.type]=(byType[i.type]||0)+i.current;});
+  const pieData=Object.entries(byType).map(([name,value])=>({name,value}));
+  return <div>
+    <Hdr title="Investimentos" sub="Portfólio e rentabilidade" btn={<button onClick={()=>setShowModal(true)} style={{padding:'10px 14px',borderRadius:10,border:'none',background:T.primary,color:'#fff',fontWeight:600,fontSize:13,minHeight:42}}>+ Novo</button>}/>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:m?10:16,marginBottom:m?4:8}}>
+      <Stat label="💵 Total Investido" value={m?Rs(ti):R(ti)} color={T.sub}/>
+      <Stat label="📊 Valor Atual" value={m?Rs(tc):R(tc)} color={T.teal}/>
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:m?10:16,marginBottom:m?16:24}}>
+      <Stat label="📈 Rendimento" value={m?Rs(tg):R(tg)} color={tg>=0?T.success:T.danger}/>
+      <Stat label="✨ Rentabilidade" value={`+${pct(tg,ti)}%`} color={T.success}/>
+    </div>
+    {m&&pieData.length>0&&<div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:16,marginBottom:14}}>
+      <h3 style={{fontSize:13,fontWeight:600,marginBottom:12}}>Por Classe de Ativo</h3>
+      <div style={{display:'flex',alignItems:'center',gap:12}}>
+        <div style={{width:100,height:100,flexShrink:0}}><ResponsiveContainer width="100%" height={100}><PieChart><Pie data={pieData} cx="50%" cy="50%" innerRadius={25} outerRadius={44} dataKey="value" paddingAngle={3}>{pieData.map((_,i)=><Cell key={i} fill={PIE_COLORS[i%PIE_COLORS.length]}/>)}</Pie></PieChart></ResponsiveContainer></div>
+        <div style={{display:'flex',flexDirection:'column',gap:6,flex:1}}>{pieData.map((d,i)=><div key={d.name} style={{display:'flex',justifyContent:'space-between',fontSize:12}}><div style={{display:'flex',alignItems:'center',gap:6}}><div style={{width:7,height:7,borderRadius:2,background:PIE_COLORS[i%PIE_COLORS.length]}}/><span style={{color:T.sub}}>{d.name}</span></div><Mono color={T.sub} s={{fontSize:12}} ch={Rs(d.value)}/></div>)}</div>
+      </div>
+    </div>}
+    <div style={{display:'grid',gridTemplateColumns:m?'1fr':'3fr 2fr',gap:16}}>
+      <div style={{display:'flex',flexDirection:'column',gap:m?10:12}}>
+        {investments.map(i=>{const g=i.current-i.amount,gp=pct(g,i.amount);return <div key={i.id} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:m?14:20}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+            <div style={{flex:1,minWidth:0}}><div style={{fontWeight:600,fontSize:m?13:15,marginBottom:6}}>{i.name}</div><div style={{display:'flex',gap:6,flexWrap:'wrap'}}><Badge ch={i.type} color={T.primary}/><span style={{fontSize:11,color:T.muted}}>desde {fd(i.date)}</span></div></div>
+            <div style={{textAlign:'right',marginLeft:12,flexShrink:0}}><Mono color={T.teal} s={{fontSize:m?14:16}} ch={Rs(i.current)}/><div style={{fontSize:11,color:T.muted,marginTop:2}}>de {Rs(i.amount)}</div></div>
+          </div>
+          <div style={{display:'flex',justifyContent:'space-between',marginTop:10,padding:'8px 12px',background:T.card2,borderRadius:8}}><span style={{fontSize:12,color:T.muted}}>Rendimento</span><Mono color={g>=0?T.success:T.danger} s={{fontSize:12}} ch={`${g>=0?'+':''}${Rs(g)} (${g>=0?'+':''}${gp}%)`}/></div>
+          <button onClick={()=>setInvestments(p=>p.filter(x=>x.id!==i.id))} style={{marginTop:10,background:'none',border:`1px solid ${T.border}`,color:T.muted,borderRadius:8,padding:'7px 12px',fontSize:12,width:'100%',minHeight:34}}>Remover</button>
+        </div>;})}
+      </div>
+      {!m&&<div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:24}}>
+        <h3 style={{fontSize:14,fontWeight:600,marginBottom:16}}>Por Classe de Ativo</h3>
+        <ResponsiveContainer width="100%" height={180}><PieChart><Pie data={pieData} cx="50%" cy="50%" innerRadius={45} outerRadius={72} dataKey="value" paddingAngle={3}>{pieData.map((_,i)=><Cell key={i} fill={PIE_COLORS[i%PIE_COLORS.length]}/>)}</Pie><Tooltip formatter={v=>R(v)}/></PieChart></ResponsiveContainer>
+        <div style={{display:'flex',flexDirection:'column',gap:8,marginTop:8}}>{pieData.map((d,i)=><div key={d.name} style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div style={{display:'flex',alignItems:'center',gap:8,fontSize:13}}><div style={{width:8,height:8,borderRadius:2,background:PIE_COLORS[i%PIE_COLORS.length]}}/>{d.name}</div><Mono color={T.sub} s={{fontSize:13}} ch={R(d.value)}/></div>)}</div>
+      </div>}
+    </div>
+    {showModal&&<Modal title="Novo Investimento" onClose={()=>setShowModal(false)}>
+      <Fld label="Nome"><input placeholder="Ex: CDB Banco Inter, ITSA4..." value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}/></Fld>
+      <Fld label="Classe"><select value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))}>{INVEST_TYPES.map(t=><option key={t} value={t}>{t}</option>)}</select></Fld>
+      <Row2><Fld label="Valor Investido (R$)"><input type="number" inputMode="numeric" placeholder="0" value={form.amount} onChange={e=>setForm(f=>({...f,amount:e.target.value}))}/></Fld><Fld label="Valor Atual (R$)"><input type="number" inputMode="numeric" placeholder="0" value={form.current} onChange={e=>setForm(f=>({...f,current:e.target.value}))}/></Fld></Row2>
+      <Row2><Fld label="Rentab. (% a.a.)"><input type="number" inputMode="decimal" placeholder="12.5" step="0.1" value={form.rate} onChange={e=>setForm(f=>({...f,rate:e.target.value}))}/></Fld><Fld label="Data Aplicação"><input type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))}/></Fld></Row2>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 2fr',gap:10,marginTop:8}}><button onClick={()=>setShowModal(false)} style={{padding:'12px',borderRadius:10,border:`1px solid ${T.border}`,background:'transparent',color:T.sub,fontWeight:600,minHeight:48}}>Cancelar</button><button onClick={add} style={{padding:'12px',borderRadius:10,border:'none',background:T.primary,color:'#fff',fontWeight:600,minHeight:48}}>Salvar</button></div>
+    </Modal>}
+  </div>;
+};
+
+/* ── GOALS ── */
+const Goals=({goals,setGoals})=>{
+  const m=useMobile();
+  const[showModal,setShowModal]=useState(false);
+  const[form,setForm]=useState({name:'',target:'',current:'0',deadline:'',color:'#5865f2',icon:'🎯'});
+  const ICONS=['🎯','🏠','🚗','✈️','💻','💍','🎓','💰','🛡️','🏖️','⚽','📱','🎸','👶'];
+  const add=()=>{if(!form.name||!form.target)return;setGoals(p=>[...p,{...form,id:uid(),target:parseFloat(form.target),current:parseFloat(form.current)||0}]);setShowModal(false);setForm({name:'',target:'',current:'0',deadline:'',color:'#5865f2',icon:'🎯'});};
+  const ts=goals.reduce((s,g)=>s+g.current,0),tt=goals.reduce((s,g)=>s+g.target,0);
+  return <div>
+    <Hdr title="Metas Financeiras" sub="Objetivos e progresso" btn={<button onClick={()=>setShowModal(true)} style={{padding:'10px 14px',borderRadius:10,border:'none',background:T.primary,color:'#fff',fontWeight:600,fontSize:13,minHeight:42}}>+ Nova</button>}/>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:m?10:16,marginBottom:m?16:24}}>
+      <Stat label="💚 Total Guardado" value={m?Rs(ts):R(ts)} color={T.success}/>
+      <Stat label="📊 Progresso" value={`${pct(ts,tt)}%`} color={T.primary}/>
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:m?'1fr':'repeat(auto-fill,minmax(280px,1fr))',gap:m?12:16}}>
+      {goals.map(g=>{const p=pct(g.current,g.target),rem=g.target-g.current,dl=g.deadline?Math.ceil((new Date(g.deadline)-new Date())/(1000*60*60*24)):null;return <div key={g.id} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:m?16:24}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:m?14:20}}>
+          <div style={{display:'flex',gap:10,alignItems:'center'}}>
+            <div style={{width:42,height:42,borderRadius:12,background:g.color+'22',display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,flexShrink:0}}>{g.icon}</div>
+            <div><div style={{fontWeight:600,fontSize:m?14:15}}>{g.name}</div>{dl!==null&&<div style={{fontSize:11,color:dl<30?T.danger:T.muted,marginTop:3}}>{dl>0?`${dl} dias`:'Vencido'}</div>}</div>
+          </div>
+          <Mono color={g.color} s={{fontSize:15,flexShrink:0,marginLeft:8}} ch={`${p}%`}/>
+        </div>
+        <Prog v={p} color={g.color} h={10}/>
+        <div style={{display:'flex',justifyContent:'space-between',marginTop:10,fontSize:12}}>
+          <span style={{color:T.sub}}>{Rs(g.current)} guardado</span>
+          <span style={{color:T.muted}}>falta {Rs(rem)}</span>
+        </div>
+        <div style={{marginTop:10,padding:'8px 12px',background:T.card2,borderRadius:8,display:'flex',justifyContent:'space-between',fontSize:12}}>
+          <span style={{color:T.muted}}>Meta total</span><Mono color={T.sub} s={{fontSize:12}} ch={R(g.target)}/>
+        </div>
+        <button onClick={()=>setGoals(pr=>pr.filter(x=>x.id!==g.id))} style={{marginTop:10,background:'none',border:`1px solid ${T.border}`,color:T.muted,borderRadius:8,padding:'7px 12px',fontSize:12,width:'100%',minHeight:34}}>Remover</button>
+      </div>;})}
+    </div>
+    {showModal&&<Modal title="Nova Meta" onClose={()=>setShowModal(false)}>
+      <Fld label="Nome da Meta"><input placeholder="Ex: Reserva de Emergência, Viagem..." value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}/></Fld>
+      <Row2><Fld label="Valor Alvo (R$)"><input type="number" inputMode="numeric" placeholder="10000" value={form.target} onChange={e=>setForm(f=>({...f,target:e.target.value}))}/></Fld><Fld label="Valor Atual (R$)"><input type="number" inputMode="numeric" placeholder="0" value={form.current} onChange={e=>setForm(f=>({...f,current:e.target.value}))}/></Fld></Row2>
+      <Fld label="Prazo"><input type="date" value={form.deadline} onChange={e=>setForm(f=>({...f,deadline:e.target.value}))}/></Fld>
+      <Row2><Fld label="Cor"><input type="color" value={form.color} onChange={e=>setForm(f=>({...f,color:e.target.value}))} style={{height:48,cursor:'pointer'}}/></Fld><Fld label="Ícone"><select value={form.icon} onChange={e=>setForm(f=>({...f,icon:e.target.value}))}>{ICONS.map(i=><option key={i} value={i}>{i}</option>)}</select></Fld></Row2>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 2fr',gap:10,marginTop:8}}><button onClick={()=>setShowModal(false)} style={{padding:'12px',borderRadius:10,border:`1px solid ${T.border}`,background:'transparent',color:T.sub,fontWeight:600,minHeight:48}}>Cancelar</button><button onClick={add} style={{padding:'12px',borderRadius:10,border:'none',background:T.primary,color:'#fff',fontWeight:600,minHeight:48}}>Salvar</button></div>
+    </Modal>}
+  </div>;
+};
+
+/* ── AI ── */
+const AI=({tx,investments,debts,goals,cards})=>{
+  const m=useMobile();
+  const[msgs,setMsgs]=useState([{role:'assistant',content:'Olá! 👋 Sou sua IA financeira. Tenho acesso a todos os seus dados em tempo real. Como posso ajudar?'}]);
+  const[input,setInput]=useState('');
+  const[loading,setLoading]=useState(false);
+  const endRef=useRef(null);
+  useEffect(()=>endRef.current?.scrollIntoView({behavior:'smooth'}),[msgs]);
+  const buildCtx=()=>{const income=tx.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0),expenses=tx.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0),byCategory={};tx.filter(t=>t.type==='expense').forEach(t=>{byCategory[t.category]=(byCategory[t.category]||0)+t.amount;});return{resumoMensal:{receitas:income,despesas:expenses,saldo:income-expenses},despesasPorCategoria:byCategory,cartoes:cards.map(c=>({nome:c.name,fatura:c.used,limite:c.limit})),dividas:debts.map(d=>({nome:d.name,restante:d.remaining,parcela:d.monthly})),investimentos:investments.map(i=>({nome:i.name,tipo:i.type,investido:i.amount,atual:i.current})),metas:goals.map(g=>({nome:g.name,meta:g.target,atual:g.current}))};};
+  const send=async(text)=>{
+    const msg=text||input;if(!msg.trim()||loading)return;setInput('');
+    const userMsg={role:'user',content:msg};const newMsgs=[...msgs,userMsg];setMsgs(newMsgs);setLoading(true);
+    try{
+      const ctx=buildCtx();
+      const sys=`Você é FinanceX AI, assistente financeiro pessoal. Responda em português brasileiro, seja direto e prático. Dados: ${JSON.stringify(ctx)}`;
+      const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,system:sys,messages:newMsgs.slice(-10).map(x=>({role:x.role,content:x.content}))})});
+      const data=await res.json();
+      setMsgs(p=>[...p,{role:'assistant',content:data.content?.[0]?.text||data.error||'Erro.'}]);
+    }catch(e){setMsgs(p=>[...p,{role:'assistant',content:'❌ Erro ao conectar.'}]);}
+    setLoading(false);
+  };
+  const QUICK=m?['📊 Analisar despesas','💸 Reduzir dívidas','💰 Orçamento ok?','🔍 Diagnóstico']:['📊 Analise minhas despesas','💸 Como reduzir dívidas?','💰 Orçamento saudável?','🎯 Dicas para metas','📈 Qual investimento?','🔍 Diagnóstico completo'];
+  return <div style={{display:'flex',flexDirection:'column',height:m?'auto':'calc(100vh - 120px)'}}>
+    <Hdr title="IA Financeira" sub="Powered by Claude"/>
+    <div style={{display:'flex',gap:6,flexWrap:m?'nowrap':'wrap',marginBottom:12,overflowX:'auto',paddingBottom:m?4:0,scrollbarWidth:'none',flexShrink:0}}>
+      {QUICK.map(q=><button key={q} onClick={()=>send(q)} disabled={loading} style={{padding:'8px 12px',borderRadius:20,fontSize:12,fontWeight:500,background:T.card,border:`1px solid ${T.border}`,color:T.sub,cursor:'pointer',whiteSpace:'nowrap',minHeight:36,flexShrink:0}}>{q}</button>)}
+    </div>
+    <div style={{flex:m?'none':1,height:m?300:undefined,overflow:'auto',marginBottom:12,background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:m?14:20,display:'flex',flexDirection:'column',gap:12}}>
+      {msgs.map((msg,i)=><div key={i} style={{display:'flex',justifyContent:msg.role==='user'?'flex-end':'flex-start',animation:'fadeIn .25s ease'}}>
+        <div style={{maxWidth:'88%',padding:m?'10px 14px':'12px 16px',borderRadius:msg.role==='user'?'16px 16px 4px 16px':'16px 16px 16px 4px',background:msg.role==='user'?T.primary:T.card2,fontSize:m?13:14,lineHeight:1.65,color:T.text,whiteSpace:'pre-wrap'}}>
+          {msg.role==='assistant'&&<div style={{fontSize:10,color:T.pLight,marginBottom:5,fontWeight:600}}>◆ FinanceX AI</div>}
+          {msg.content}
+        </div>
+      </div>)}
+      {loading&&<div style={{display:'flex'}}><div style={{padding:'12px 16px',borderRadius:'16px 16px 16px 4px',background:T.card2}}><div style={{display:'flex',gap:5,alignItems:'center'}}>{[0,1,2].map(i=><div key={i} style={{width:6,height:6,borderRadius:'50%',background:T.primary,animation:`dots 1s ${i*0.18}s infinite`}}/>)}</div></div></div>}
+      <div ref={endRef}/>
+    </div>
+    <div style={{display:'flex',gap:8,flexShrink:0}}>
+      <input placeholder="Pergunte sobre suas finanças..." value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&send()} style={{flex:1,padding:m?'12px 14px':'14px 18px',borderRadius:12,fontSize:14}} disabled={loading}/>
+      <button onClick={()=>send()} disabled={loading||!input.trim()} style={{padding:m?'12px 16px':'14px 24px',borderRadius:10,border:'none',background:T.primary,color:'#fff',fontWeight:600,fontSize:14,minWidth:m?52:90,opacity:(loading||!input.trim())?.5:1}}>{loading?'...':'→'}</button>
+    </div>
+  </div>;
+};
+
+/* ── SETTINGS ── */
+const Settings=({onReset,onDisconnect})=><div>
+  <Hdr title="Configurações"/>
+  <div style={{maxWidth:540,display:'flex',flexDirection:'column',gap:14}}>
+    <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:20}}>
+      <h3 style={{fontSize:15,fontWeight:600,marginBottom:8}}>☁ Armazenamento</h3>
+      <p style={{fontSize:13,color:T.muted,lineHeight:1.6,marginBottom:14}}>Dados salvos automaticamente no Firebase Firestore e sincronizados em todos os dispositivos.</p>
+      <button onClick={onDisconnect} style={{padding:'10px 18px',borderRadius:10,border:`1px solid ${T.border}`,color:T.sub,background:'transparent',fontSize:13,fontWeight:600,minHeight:44}}>Trocar conta Firebase</button>
+    </div>
+    <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:20}}>
+      <h3 style={{fontSize:15,fontWeight:600,marginBottom:8}}>🤖 IA</h3>
+      <p style={{fontSize:13,color:T.muted,lineHeight:1.6}}>A chave da API Anthropic fica no servidor Vercel como variável de ambiente — nunca exposta no browser.</p>
+    </div>
+    <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:20}}>
+      <h3 style={{fontSize:15,fontWeight:600,marginBottom:8}}>⚠️ Zona de risco</h3>
+      <p style={{fontSize:13,color:T.muted,lineHeight:1.6,marginBottom:14}}>Apaga todos os dados e restaura os dados de exemplo.</p>
+      <button onClick={onReset} style={{padding:'10px 18px',borderRadius:10,border:`1px solid ${T.danger}`,color:T.danger,background:'transparent',fontSize:13,fontWeight:600,minHeight:44}}>Restaurar dados de exemplo</button>
+    </div>
+  </div>
+</div>;
+
+/* ── APP ── */
+function App(){
+  const[ww,setWw]=useState(window.innerWidth);
+  useEffect(()=>{const h=()=>setWw(window.innerWidth);window.addEventListener('resize',h);return()=>window.removeEventListener('resize',h);},[]);
+  const m=ww<768;
+
+  const[fbCfg,setFbCfg]=useState(()=>lsGet('fx_firebase',null));
+  const[loading,setLoading]=useState(false);
+  const[saving,setSaving]=useState(false);
+  const[tab,setTab]=useState('dashboard');
+  const[data,setData]=useState(null);
+
+  useEffect(()=>{
+    if(!fbCfg)return;
+    if(!initFirebase(fbCfg)){lsSet('fx_firebase',null);setFbCfg(null);return;}
+    setLoading(true);
+    loadFromFirestore().then(d=>{setData(d||INIT_DATA);setLoading(false);});
+  },[fbCfg]);
+
+  const update=useCallback((key,val)=>{
+    setData(prev=>{const next={...prev,[key]:typeof val==='function'?val(prev[key]):val};setSaving(true);saveToFirestore(next);setTimeout(()=>setSaving(false),1500);return next;});
+  },[]);
+
+  const resetData=()=>{if(!confirm('Apagar todos os dados e restaurar o exemplo?'))return;setData(INIT_DATA);saveToFirestore(INIT_DATA);};
+  const disconnect=()=>{lsSet('fx_firebase',null);setFbCfg(null);setData(null);db=null;};
+
+  if(!fbCfg)return <SetupScreen onSetup={cfg=>{lsSet('fx_firebase',cfg);setFbCfg(cfg);}}/>;
+  if(loading||!data)return <LoadingScreen/>;
+
+  const{tx,cards,debts,investments,goals}=data;
+  const VIEWS={
+    dashboard:   <Dashboard tx={tx} investments={investments} debts={debts} cards={cards}/>,
+    transactions:<Transactions tx={tx} setTx={v=>update('tx',v)}/>,
+    cards:       <CreditCards cards={cards} setCards={v=>update('cards',v)}/>,
+    debts:       <Debts debts={debts} setDebts={v=>update('debts',v)}/>,
+    investments: <Investments investments={investments} setInvestments={v=>update('investments',v)}/>,
+    goals:       <Goals goals={goals} setGoals={v=>update('goals',v)}/>,
+    ai:          <AI tx={tx} investments={investments} debts={debts} goals={goals} cards={cards}/>,
+    settings:    <Settings onReset={resetData} onDisconnect={disconnect}/>,
+  };
+
+  const curNav=NAV.find(n=>n.id===tab);
+
+  return(
+    <MC.Provider value={m}>
+      <div style={{display:'flex',flexDirection:m?'column':'row',height:'100vh',background:T.bg,color:T.text,overflow:'hidden',fontFamily:"'DM Sans',sans-serif"}}>
+        <style>{G}</style>
+        {m?(
+          <>
+            <TopBar label={curNav?.label||''}/>
+            <main style={{flex:1,overflowY:'auto',padding:'16px 16px',paddingBottom:'calc(80px + env(safe-area-inset-bottom))'}}>
+              {VIEWS[tab]}
+            </main>
+            <BottomNav tab={tab} setTab={setTab}/>
+          </>
+        ):(
+          <>
+            <Sidebar tab={tab} setTab={setTab}/>
+            <main style={{flex:1,overflowY:'auto',padding:'40px'}}>{VIEWS[tab]}</main>
+          </>
+        )}
+        <SaveDot saving={saving}/>
+      </div>
+    </MC.Provider>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
