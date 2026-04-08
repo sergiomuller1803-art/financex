@@ -20,16 +20,17 @@ export default async function handler(req, res) {
     }
   }
   if (contents.length > 0 && contents[0].role === 'model') contents.shift();
+  if (contents.length === 0) contents.push({ role: 'user', parts: [{ text: 'Olá' }] });
 
   const body = {
     contents,
     generationConfig: { maxOutputTokens: max_tokens || 1000 },
+    systemInstruction: system ? { role: 'user', parts: [{ text: system }] } : undefined,
   };
-  if (system) body.systemInstruction = { parts: [{ text: system }] };
 
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
