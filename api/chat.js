@@ -24,7 +24,7 @@ export default async function handler(req, res) {
         'X-Title': 'FinanceX',
       },
       body: JSON.stringify({
-        model: 'google/gemma-3-1b-it:free',
+        model: 'meta-llama/llama-3.2-3b-instruct:free',
         messages: allMessages,
         max_tokens: max_tokens || 1000,
       }),
