@@ -5,33 +5,46 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'OPENROUTER_API_KEY não configurada no Vercel.' });
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY não configurada.' });
 
   const { messages, system, max_tokens } = req.body;
 
-  const allMessages = [];
-  if (system) allMessages.push({ role: 'system', content: system });
-  allMessages.push(...messages);
+  const contents = [];
+  for (const m of messages) {
+    const role = m.role === 'assistant' ? 'model' : 'user';
+    if (contents.length > 0 && contents[contents.length - 1].role === role) {
+      contents[contents.length - 1].parts[0].text += '\n' + m.content;
+    } else {
+      contents.push({ role, parts: [{ text: m.content }] });
+    }
+  }
+  if (contents.length > 0 && contents[0].role === 'model') contents.shift();
+  if (contents.length === 0) contents.push({ role: 'user', parts: [{ text: 'Olá' }] });
+
+  const body = {
+    contents,
+    generationConfig: { maxOutputTokens: max_tokens || 1000 },
+  };
+  if (system) {
+    body.systemInstruction = { parts: [{ text: system }] };
+  }
 
   try {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-        'HTTP-Referer': 'https://financex.app',
-        'X-Title': 'FinanceX',
-      },
-      body: JSON.stringify({
-        model: 'openrouter/free',
-        messages: allMessages,
-        max_tokens: max_tokens || 1000,
-      }),
-    });
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body: JSON.stringify(body),
+      }
+    );
     const data = await response.json();
     const text =
-      data.choices?.[0]?.message?.content ||
+      data.candidates?.[0]?.content?.parts?.[0]?.text ||
       data.error?.message ||
       'Erro ao obter resposta.';
     res.status(200).json({ content: [{ text }] });
